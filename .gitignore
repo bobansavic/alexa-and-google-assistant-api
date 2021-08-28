@@ -1,2 +1,4 @@
 #JetBrains/IntelliJ
 .idea/
+out/
+target/
