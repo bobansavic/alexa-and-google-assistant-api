@@ -1,6 +1,6 @@
 package org.fon.master.bsavic.api.model.google;
 
-public class AppRequestInput {
+public class ActionsBuilderRequestInput {
     private Handler handler;
     private Session session;
     private Intent intent;

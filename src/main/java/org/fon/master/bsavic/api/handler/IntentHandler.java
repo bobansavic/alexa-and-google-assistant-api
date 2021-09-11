@@ -2,7 +2,6 @@ package org.fon.master.bsavic.api.handler;
 
 import com.amazon.ask.dispatcher.request.handler.HandlerInput;
 import com.amazon.ask.dispatcher.request.handler.RequestHandler;
-import com.amazon.ask.model.Intent;
 import com.amazon.ask.model.IntentConfirmationStatus;
 import com.amazon.ask.model.IntentRequest;
 import com.amazon.ask.model.Response;
@@ -13,6 +12,7 @@ import com.google.actions.api.*;
 import com.google.actions.api.response.ResponseBuilder;
 import com.google.common.base.Strings;
 import org.fon.master.bsavic.api.model.*;
+import org.fon.master.bsavic.api.model.Slot;
 import org.fon.master.bsavic.api.model.google.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,8 +20,7 @@ import org.slf4j.LoggerFactory;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
 public abstract class IntentHandler extends DialogflowApp implements RequestHandler {
     private static final Logger log = LoggerFactory.getLogger(IntentHandler.class);
@@ -30,7 +29,7 @@ public abstract class IntentHandler extends DialogflowApp implements RequestHand
     private String intentName;
     private String intentNameContext;
     private Class<?> intentType;
-    private Resolver resolver;
+    private ApiRequestResolver resolver;
     private HandlerInput handlerInput;
 
     public IntentHandler(String intentName) {
@@ -51,7 +50,7 @@ public abstract class IntentHandler extends DialogflowApp implements RequestHand
     @Override
     public Optional<Response> handle(HandlerInput input) {
         this.handlerInput = input;
-        doSomething(null);
+        process(null);
 
         if (!resolver.getSessionStorage().isEmpty()) {
             for (Map.Entry<String, Object> entry : resolver.getSessionStorage().entrySet()) {
@@ -60,9 +59,10 @@ public abstract class IntentHandler extends DialogflowApp implements RequestHand
         }
 
         IntentRequest intentRequest = (IntentRequest) handlerInput.getRequestEnvelope().getRequest();
+        com.amazon.ask.model.Intent updatedIntent = intentRequest.getIntent();
         IntentDeniedResponse intentDeniedResponse = resolver.getIntentDeniedResponse();
-        if (intentRequest.getIntent().getConfirmationStatus() == IntentConfirmationStatus.DENIED
-                && intentDeniedResponse != null) {
+        if (intentDeniedResponse != null
+                && intentRequest.getIntent().getConfirmationStatus() == IntentConfirmationStatus.DENIED) {
             return input.getResponseBuilder()
                     .withSpeech(intentDeniedResponse.getOutputSpeech())
                     .withShouldEndSession(intentDeniedResponse.isEndConversation())
@@ -70,16 +70,17 @@ public abstract class IntentHandler extends DialogflowApp implements RequestHand
         }
         String speechText = resolver.getOutputSpeech();
         com.amazon.ask.response.ResponseBuilder responseBuilder = input.getResponseBuilder()
-                .withSpeech(speechText)
-                .withShouldEndSession(resolver.isEndOfConversation());
+                .withShouldEndSession(resolver.isEndOfConversation())
+                .withSpeech(speechText);
 
         ElicitSlot slotToElicit = resolver.getSlotToElicit();
         if (slotToElicit != null) {
-            responseBuilder.addElicitSlotDirective(slotToElicit.getSlot(), intentRequest.getIntent());
+            log.info("Adding ElicitSlotDirective for slot [{}] with updated intent [{}].", slotToElicit.getSlot(), updatedIntent.getName());
+            responseBuilder.addElicitSlotDirective(slotToElicit.getSlot(), updatedIntent);
         }
 
         return responseBuilder
-                .withSimpleCard("", speechText)
+//                .withSimpleCard("", speechText)
                 .build();
     }
 
@@ -98,8 +99,8 @@ public abstract class IntentHandler extends DialogflowApp implements RequestHand
         return actionResponse;
     }
 
-    public String invoke(AppRequestInput input, Map<String, String> headers) throws JsonProcessingException {
-        doSomething(input);
+    public String invoke(ActionsBuilderRequestInput input, Map<String, String> headers) throws JsonProcessingException {
+        process(input);
         String speech = resolver.getOutputSpeech();
 
         AppRequestOutput requestOutput = new AppRequestOutput();
@@ -118,11 +119,10 @@ public abstract class IntentHandler extends DialogflowApp implements RequestHand
 
         if (resolver.isEndOfConversation()) {
             requestOutput.getScene().setNext(new NextScene("actions.scene.END_CONVERSATION"));
-            requestOutput.getUser().getParams().clear();
         }
 
         for (Map.Entry<String, Object> entry : resolver.getSessionStorage().entrySet()) {
-            requestOutput.getUser().getParams().put(entry.getKey(), entry.getValue());
+            requestOutput.getSession().getParams().put(entry.getKey(), entry.getValue());
         }
 
         ElicitSlot slotToElicit = resolver.getSlotToElicit();
@@ -130,10 +130,14 @@ public abstract class IntentHandler extends DialogflowApp implements RequestHand
             requestOutput.getSession().getParams().put(slotToElicit.getSlotWithPrefix(), slotToElicit.getIntent());
         }
 
+        if (!Strings.isNullOrEmpty(resolver.getNextScene())) {
+            requestOutput.getScene().setNext(new NextScene(resolver.getNextScene()));
+        }
+
         return new ObjectMapper().writeValueAsString(requestOutput);
     }
 
-    public abstract ActionResponse doSomething(Object input);
+    public abstract ActionResponse process(Object input);
 
     void updateRouting() {
         try {
@@ -157,6 +161,7 @@ public abstract class IntentHandler extends DialogflowApp implements RequestHand
         }
     }
 
+    @SuppressWarnings("unchecked")
     public void updateRouting(Class<? extends IntentHandler> type, String value) {
         try {
             Method[] methods = type.getDeclaredMethods();
@@ -185,11 +190,11 @@ public abstract class IntentHandler extends DialogflowApp implements RequestHand
         return intentName;
     }
 
-    public void setResolver(Resolver resolver) {
+    public void setResolver(ApiRequestResolver resolver) {
         this.resolver = resolver;
     }
 
-    public ActionResponse processResponse(Resolver resolver) {
+    public ActionResponse processResponse(ApiRequestResolver resolver) {
         this.resolver = resolver;
         if (resolver.getInput() != null && resolver.getInput() instanceof ActionRequest) {
             return respond((ActionRequest) resolver.getInput());
@@ -209,66 +214,71 @@ public abstract class IntentHandler extends DialogflowApp implements RequestHand
         this.intentNameContext = intentNameContext;
     }
 
-    public void registerSlots(Resolver resolver, org.fon.master.bsavic.api.model.Slot... slots) {
-        if (resolver.getInput() != null && resolver.getInput() instanceof ActionRequest) {
-            ActionRequest input = (ActionRequest) resolver.getInput();
-            // Get slots Google style
-            for (org.fon.master.bsavic.api.model.Slot s : slots) {
-                Object parameterValue = input.getParameter(s.getName());
-                if (parameterValue != null && !Strings.isNullOrEmpty(parameterValue.toString())) {
-                    resolver.registerSlot(s.getName(), parameterValue.toString());
-                }
+    public Slot getSlotForInput(Object input, String slotName) {
+        if (input != null && resolver.getInput() instanceof ActionRequest) {
+            ActionRequest actionRequestInput = (ActionRequest) resolver.getInput();
+            // Get slots Google DialogFlow style
+            Object parameterValue = actionRequestInput.getParameter(slotName);
+            if (parameterValue != null && !Strings.isNullOrEmpty(parameterValue.toString())) {
+                return new Slot(slotName, parameterValue.toString());
+            } else {
+                return null;
             }
-        } else if (resolver.getInput() != null && resolver.getInput() instanceof AppRequestInput) {
-            AppRequestInput input = (AppRequestInput) resolver.getInput();
-            Map<String, IntentParameterValue> inputSlots = input.getIntent().getParams();
+        } else if (input != null && resolver.getInput() instanceof ActionsBuilderRequestInput) {
+            ActionsBuilderRequestInput actionsBuilderInput = (ActionsBuilderRequestInput) resolver.getInput();
+            Map<String, IntentParameterValue> inputSlots = actionsBuilderInput.getIntent().getParams();
+            Map<String, org.fon.master.bsavic.api.model.google.Slot> sceneSlots = actionsBuilderInput.getScene().getSlots();
             // Get slots Google Actions Builder style
-            for (org.fon.master.bsavic.api.model.Slot s : slots) {
-                IntentParameterValue slotValue = inputSlots.get(s.getName());
-                if (slotValue == null) {
-                    slotValue = inputSlots.get(s.getName().toLowerCase());
-                }
-                if (slotValue == null) {
-                    Object resolvedSessionSlotValue = input.getSession().getParams()
-                            .get(ApiConstants.ELICIT_SLOT_RESOLVED_PREFIX + s.getName());
-                    if (resolvedSessionSlotValue == null) {
-                        resolvedSessionSlotValue = input.getSession().getParams()
-                                .get(ApiConstants.ELICIT_SLOT_RESOLVED_PREFIX + s.getName().toLowerCase());
-                        if (resolvedSessionSlotValue != null) {
-                            slotValue = new IntentParameterValue(resolvedSessionSlotValue.toString());
-                        }
-                    } else {
-                        slotValue = new IntentParameterValue(resolvedSessionSlotValue.toString());
+            IntentParameterValue slotValue;
+            // First try to fill the slot via user inputs for elicited slots
+            Object resolvedSessionSlotValue = actionsBuilderInput.getSession().getParams()
+                    .get(ApiConstants.ELICIT_SLOT_RESOLVED_PREFIX + slotName);
+            if (resolvedSessionSlotValue == null) {
+                resolvedSessionSlotValue = actionsBuilderInput.getSession().getParams()
+                        .get(ApiConstants.ELICIT_SLOT_RESOLVED_PREFIX + slotName.toLowerCase());
+                if (resolvedSessionSlotValue != null) {
+                    slotValue = new IntentParameterValue(resolvedSessionSlotValue.toString());
+                } else {
+                    // Try to fill the slot via intent parameters/slots
+                    slotValue = inputSlots.get(slotName);
+                    if (slotValue == null) {
+                        slotValue = inputSlots.get(slotName.toLowerCase());
                     }
                 }
-                if (slotValue != null && !Strings.isNullOrEmpty(slotValue.getResolved())) {
-                    resolver.registerSlot(s.getName(), slotValue.getResolved());
-                }
+            } else {
+                slotValue = new IntentParameterValue(resolvedSessionSlotValue.toString());
+            }
+
+            if (slotValue != null && !Strings.isNullOrEmpty(slotValue.getResolved())) {
+                return new Slot(slotName, slotValue.getResolved());
+            } else {
+                return null;
             }
         } else if (handlerInput != null) {
             // Get slots Alexa style
             IntentRequest intentRequest = (IntentRequest) handlerInput.getRequestEnvelope().getRequest();
             Map<String, com.amazon.ask.model.Slot> askSlots = intentRequest.getIntent().getSlots();
-            for (org.fon.master.bsavic.api.model.Slot s : slots) {
-                com.amazon.ask.model.Slot askSlot = askSlots.get(s.getName());
-                if (askSlot != null && !Strings.isNullOrEmpty(askSlot.getValue())) {
-                    String value = askSlots.get(s.getName()).getValue();
-                    resolver.registerSlot(s.getName(), value);
-                }
+            com.amazon.ask.model.Slot askSlot = askSlots.get(slotName);
+            if (askSlot != null && !Strings.isNullOrEmpty(askSlot.getValue())) {
+                String value = askSlots.get(slotName).getValue();
+                return new Slot(slotName, value);
+            } else {
+                return null;
             }
         }
+        return null;
     }
 
-    public void getSessionStorage(Resolver resolver) {
+    public void resolveSessionStorage(ApiRequestResolver resolver) {
         if (resolver.getInput() != null && resolver.getInput() instanceof ActionRequest) {
             ActionRequest input = (ActionRequest) resolver.getInput();
             Map<String, Object> userStorage = input.getUserStorage();
             for (Map.Entry<String, Object> entry : userStorage.entrySet()) {
                 resolver.getSessionStorage().put(entry.getKey(), entry.getValue());
             }
-        } else if (resolver.getInput() != null && resolver.getInput() instanceof AppRequestInput) {
-            AppRequestInput input = (AppRequestInput) resolver.getInput();
-            Map<String, Object> sessionParams = input.getUser().getParams();
+        } else if (resolver.getInput() != null && resolver.getInput() instanceof ActionsBuilderRequestInput) {
+            ActionsBuilderRequestInput input = (ActionsBuilderRequestInput) resolver.getInput();
+            Map<String, Object> sessionParams = input.getSession().getParams();
             // Get slots Google Actions Builder style
             for (Map.Entry<String, Object> entry : sessionParams.entrySet()) {
                 resolver.getSessionStorage().put(entry.getKey(), entry.getValue());
@@ -299,5 +309,84 @@ public abstract class IntentHandler extends DialogflowApp implements RequestHand
             }
         }
         return null;
+    }
+
+    public class ApiRequestResolver {
+        private Object input;
+        private String outputSpeech;
+        private boolean endOfConversation = false;
+        private Map<String, Object> sessionStorage = new HashMap<>();
+        private IntentDeniedResponse intentDeniedResponse;
+        private ElicitSlot slotToElicit;
+        private String nextScene;
+
+        public ApiRequestResolver(Object input) {
+            resolver = this;
+            this.input = input;
+            resolveSessionStorage(this);
+        }
+
+        public String getOutputSpeech() {
+            return outputSpeech;
+        }
+
+        public void setOutputSpeech(String outputSpeech) {
+            this.outputSpeech = outputSpeech;
+        }
+
+        public boolean isEndOfConversation() {
+            return endOfConversation;
+        }
+
+        public void setEndOfConversation(boolean endOfConversation) {
+            this.endOfConversation = endOfConversation;
+        }
+
+        public Slot getSlot(String slotName) {
+            return getSlotForInput(this.input, slotName);
+        }
+
+        public Object getInput() {
+            return input;
+        }
+
+        public Map<String, Object> getSessionStorage() {
+            return sessionStorage;
+        }
+
+        public IntentDeniedResponse getIntentDeniedResponse() {
+            return intentDeniedResponse;
+        }
+
+        public void setIntentDeniedResponse(IntentDeniedResponse intentDeniedResponse) {
+            this.intentDeniedResponse = intentDeniedResponse;
+        }
+
+        public ElicitSlot getSlotToElicit() {
+            return slotToElicit;
+        }
+
+        public void setSlotToElicit(String slot) {
+            if (!Strings.isNullOrEmpty(slot)) {
+                slotToElicit = new ElicitSlot(slot, extractIntentHandlerFromInput());
+            }
+        }
+
+        public String getNextScene() {
+            return nextScene;
+        }
+
+        public void setNextScene(String nextScene) {
+            this.nextScene = nextScene;
+        }
+
+        private String extractIntentHandlerFromInput() {
+            if (input instanceof ActionsBuilderRequestInput) {
+                ActionsBuilderRequestInput in = (ActionsBuilderRequestInput) input;
+                return in.getHandler().getName();
+            } else {
+                return null;
+            }
+        }
     }
 }

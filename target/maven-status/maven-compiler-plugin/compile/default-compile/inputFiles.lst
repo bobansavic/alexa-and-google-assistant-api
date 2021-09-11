@@ -1,3 +1,4 @@
+C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\handler\ask\NavigateHomeIntentHandler.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\Engagement.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\Location.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\TypeOverride.java
@@ -20,14 +21,14 @@ C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\mast
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\handler\SessionEndedRequestHandler.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\Card.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\ApiConstants.java
+C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\handler\ask\FallbackIntentHandler.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\TableColumn.java
-C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\handler\LaunchRequestHandler.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\Simple.java
+C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\ActionsBuilderRequestInput.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\TypeOverrideMode.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\Collection.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\Link.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\ImageFill.java
-C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\Resolver.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\PostalAddress.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\SlotStatus.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\LatLng.java
@@ -40,7 +41,6 @@ C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\mast
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\SlotMode.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\Capability.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\EntryDisplay.java
-C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\handler\FallbackIntentHandler.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\Content.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\Home.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\Session.java
@@ -50,7 +50,7 @@ C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\mast
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\Slot.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\AppRequestOutput.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\Table.java
-C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\AppRequestInput.java
+C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\handler\ask\CancelAndStopIntentHandler.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\TableRow.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\Slot.java
 C:\Users\Boban\Desktop\alexa-and-google-assistant-api\src\main\java\org\fon\master\bsavic\api\model\google\SlotFillingStatus.java

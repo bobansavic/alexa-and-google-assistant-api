@@ -25,6 +25,11 @@ public class Slot {
         return value;
     }
 
+    public Integer getValueAsInteger() {
+        double d = Double.parseDouble(value);
+        return (int) d;
+    }
+
     public void setValue(String value) {
         this.value = value;
     }

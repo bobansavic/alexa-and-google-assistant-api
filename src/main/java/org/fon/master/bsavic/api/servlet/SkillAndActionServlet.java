@@ -2,23 +2,28 @@ package org.fon.master.bsavic.api.servlet;
 
 import com.amazon.ask.Skill;
 import com.amazon.ask.Skills;
+import com.amazon.ask.dispatcher.request.handler.HandlerInput;
+import com.amazon.ask.dispatcher.request.handler.RequestHandler;
 import com.amazon.ask.exception.AskSdkException;
+import com.amazon.ask.model.LaunchRequest;
 import com.amazon.ask.model.RequestEnvelope;
+import com.amazon.ask.model.Response;
 import com.amazon.ask.model.ResponseEnvelope;
 import com.amazon.ask.model.services.Serializer;
+import com.amazon.ask.request.Predicates;
 import com.amazon.ask.servlet.ServletConstants;
 import com.amazon.ask.servlet.util.ServletUtils;
 import com.amazon.ask.servlet.verifiers.*;
 import com.amazon.ask.util.JacksonSerializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Strings;
-import org.fon.master.bsavic.api.handler.FallbackIntentHandler;
+import org.fon.master.bsavic.api.handler.ask.CancelAndStopIntentHandler;
+import org.fon.master.bsavic.api.handler.ask.FallbackIntentHandler;
 import org.fon.master.bsavic.api.handler.IntentHandler;
-import org.fon.master.bsavic.api.handler.LaunchRequestHandler;
+import org.fon.master.bsavic.api.handler.ask.NavigateHomeIntentHandler;
 import org.fon.master.bsavic.api.model.ApiConstants;
-import org.fon.master.bsavic.api.model.google.AppRequestInput;
+import org.fon.master.bsavic.api.model.google.ActionsBuilderRequestInput;
 import org.apache.commons.io.IOUtils;
-import org.fon.master.bsavic.api.model.google.Entry;
 import org.fon.master.bsavic.api.model.google.Intent;
 import org.fon.master.bsavic.api.model.google.IntentParameterValue;
 import org.json.JSONObject;
@@ -29,7 +34,6 @@ import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.*;
-import java.net.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
@@ -38,15 +42,16 @@ import static com.amazon.ask.servlet.ServletConstants.DEFAULT_TOLERANCE_MILLIS;
 
 public class SkillAndActionServlet extends HttpServlet {
     private static final Logger log = LoggerFactory.getLogger(SkillAndActionServlet.class);
-    private static final long serialVersionUID = 3257254794185762002L;
 
     private transient final Skill skill;
     private transient final List<SkillServletVerifier> verifiers;
     private transient final Serializer serializer = new JacksonSerializer();
+    private String applicationName;
 
     private List<IntentHandler> handlers = new ArrayList<>();
 
-    public SkillAndActionServlet(IntentHandler... handlers) {
+    public SkillAndActionServlet(String applicationName, IntentHandler... handlers) {
+        this.applicationName = applicationName;
         List<SkillServletVerifier> defaultVerifiers = new ArrayList<>();
         if (!ServletUtils.isRequestSignatureCheckSystemPropertyDisabled()) {
             defaultVerifiers.add(new SkillRequestSignatureVerifier());
@@ -54,20 +59,28 @@ public class SkillAndActionServlet extends HttpServlet {
         Long timestampToleranceProperty = ServletUtils.getTimeStampToleranceSystemProperty();
         defaultVerifiers.add(new SkillRequestTimestampVerifier(timestampToleranceProperty != null
                 ? timestampToleranceProperty : DEFAULT_TOLERANCE_MILLIS));
-        log.info("Found {} intent handlers to register", handlers.length);
+        log.info("Found {} intent handler(s) to register", handlers.length);
         if (handlers.length > 0) {
             for (IntentHandler handler : handlers) {
                 log.info("{}", handler.getIntentName());
             }
         }
-        this.skill = Skills.standard().addRequestHandlers(new LaunchRequestHandler(), new FallbackIntentHandler()).addRequestHandlers(handlers).build();
+        this.skill = Skills.standard()
+                // Add default handlers for built-in Alexa intents
+                .addRequestHandlers(
+                        new LaunchRequestHandler(),
+                        new FallbackIntentHandler(),
+                        new CancelAndStopIntentHandler(),
+                        new NavigateHomeIntentHandler())
+                // Add the rest of defined handlers
+                .addRequestHandlers(handlers)
+                .build();
         this.verifiers = defaultVerifiers;
         this.handlers.addAll(Arrays.asList(handlers));
     }
 
     /**
      * Handles a POST request. Based on the request parameters, invokes the right method on the
-     * {@code Skill}.
      *
      * @param request  the object that contains the request the client has made of the org.fon.master.bsavic.api.servlet
      * @param response object that contains the response the org.fon.master.bsavic.api.servlet sends to the client
@@ -81,29 +94,8 @@ public class SkillAndActionServlet extends HttpServlet {
         JSONObject object = new JSONObject(jsonString);
         if (checkRequestOrigin(object) == 0) {
             log.info("Request came from Alexa");
-            // Do Alexa stuff
             try {
-            final RequestEnvelope deserializedRequestEnvelope = serializer.deserialize(IOUtils.toString(
-                    serializedRequestEnvelope, ServletConstants.CHARACTER_ENCODING), RequestEnvelope.class);
-
-            final AlexaHttpRequest alexaHttpRequest = new ServletRequest(request, serializedRequestEnvelope, deserializedRequestEnvelope);
-
-            // Verify the authenticity of the request by executing configured verifiers.
-            for (SkillServletVerifier verifier : verifiers) {
-                verifier.verify(alexaHttpRequest);
-            }
-
-            ResponseEnvelope skillResponse = skill.invoke(deserializedRequestEnvelope);
-            // Generate JSON and send back the response
-            response.setContentType("application/json");
-            response.setStatus(HttpServletResponse.SC_OK);
-            if (skillResponse != null) {
-                byte[] serializedResponse = serializer.serialize(skillResponse).getBytes(StandardCharsets.UTF_8);
-                try (final OutputStream out = response.getOutputStream()) {
-                    response.setContentLength(serializedResponse.length);
-                    out.write(serializedResponse);
-                }
-            }
+            processAlexaRequest(serializedRequestEnvelope, request, response);
         } catch (SecurityException ex) {
             int statusCode = HttpServletResponse.SC_BAD_REQUEST;
             log.error("Incoming request failed verification {}", statusCode, ex);
@@ -114,63 +106,18 @@ public class SkillAndActionServlet extends HttpServlet {
             response.sendError(statusCode, ex.getMessage());
             }
         } else if (checkRequestOrigin(object) == 1) {
-            log.info("Request came from Google");
+            log.info("Request came from Google Assistant (Legacy)");
             // Do Google stuff
             try {
-                //get intent name
-                JSONObject queryResultObject = object.getJSONObject("queryResult");
-                JSONObject intentObject = queryResultObject.getJSONObject("intent");
-                String intentName = intentObject.getString("displayName");
-
-                String responseText = "";
-
-                for (IntentHandler handler : handlers) {
-                    if (handler.getIntentNameContext().equals(intentName)) {
-                        /*org.fon.master.bsavic.api.handler.updateRouting(org.fon.master.bsavic.api.handler.getClass());
-                        Method method = InHouseHelloWorldIntentHandler.class.getMethod("doSomething", Object.class);
-                        ForIntent forIntent = method.getDeclaredAnnotation(ForIntent.class);
-                        System.out.println("ForIntent changed value = " + forIntent.value());*/
-                        responseText = handler.handleRequest(jsonString, getHeadersMap(request)).get();
-                    }
-                }
-                if (Strings.isNullOrEmpty(responseText)) {
-                    for (IntentHandler handler : handlers) {
-                        if (intentName.contains(handler.getIntentNameContext())) {
-                            handler.updateRouting(handler.getClass(), intentName);
-                            responseText = handler.handleRequest(jsonString, getHeadersMap(request)).get();
-                        }
-                    }
-                }
-                if (Strings.isNullOrEmpty(responseText)) {
-                    for (IntentHandler handler : handlers) {
-                        if (handler.getIntentNameContext().contains(intentName)) {
-                            handler.updateRouting(handler.getClass(), intentName);
-                            responseText = handler.handleRequest(jsonString, getHeadersMap(request)).get();
-                        }
-                    }
-                }
-                if (!Strings.isNullOrEmpty(responseText)) {
-                    response.setStatus(HttpServletResponse.SC_OK);
-                    response.getWriter().write(responseText);
-                    response.getWriter().flush();
-                }
+                processLegacyGoogleAssistantRequest(object, jsonString, request, response);
             } catch (InterruptedException | ExecutionException e) {
                 log.error("Error building Google Assistant response", e);
             }
 
         } else if (checkRequestOrigin(object) == 11) {
-            log.info("Request came from Google Actions Builder");
-            ObjectMapper objectMapper = new ObjectMapper();
-            String responseText = "";
+            log.info("Request came from Google Assistant");
             try {
-                AppRequestInput requestInput = objectMapper.readValue(jsonString, AppRequestInput.class);
-                String handlerName = requestInput.getHandler().getName();
-                log.info("Detected org.fon.master.bsavic.api.handler: {}", handlerName);
-                responseText = routeRequest(requestInput).invoke(requestInput, getHeadersMap(request));
-
-                response.setStatus(HttpServletResponse.SC_OK);
-                response.getWriter().write(responseText);
-                response.getWriter().flush();
+                processGoogleAssistantRequest(jsonString, request, response);
             } catch (Exception e) {
                 log.error("Failed to marshal action request from Google Actions Builder", e);
                 log.info(object.toString(4));
@@ -182,14 +129,72 @@ public class SkillAndActionServlet extends HttpServlet {
         }
     }
 
-    /**
-     * Sets a {@code Proxy} object that this org.fon.master.bsavic.api.servlet may use if Request Signature Verification is enabled.
-     *
-     * @param proxy the {@code Proxy} to associate with this org.fon.master.bsavic.api.servlet.
-     */
-    public void setProxy(Proxy proxy) {
-        if (verifiers.removeIf(verifier -> verifier instanceof SkillRequestSignatureVerifier)) {
-            verifiers.add(new SkillRequestSignatureVerifier(proxy));
+    private void processGoogleAssistantRequest(String jsonString, HttpServletRequest request, HttpServletResponse response) throws IOException {
+        String responseText = "";
+        ActionsBuilderRequestInput requestInput = new ObjectMapper().readValue(jsonString, ActionsBuilderRequestInput.class);
+        String handlerName = requestInput.getHandler().getName();
+        log.info("Detected handler: {}", handlerName);
+        responseText = routeRequest(requestInput).invoke(requestInput, getHeadersMap(request));
+
+        response.setStatus(HttpServletResponse.SC_OK);
+        response.getWriter().write(responseText);
+        response.getWriter().flush();
+    }
+
+    private void processLegacyGoogleAssistantRequest(JSONObject object, String jsonString, HttpServletRequest request, HttpServletResponse response) throws ExecutionException, InterruptedException, IOException {
+        JSONObject queryResultObject = object.getJSONObject("queryResult");
+        JSONObject intentObject = queryResultObject.getJSONObject("intent");
+        String intentName = intentObject.getString("displayName");
+
+        String responseText = "";
+
+        for (IntentHandler handler : handlers) {
+            if (handler.getIntentNameContext().equals(intentName)) {
+                responseText = handler.handleRequest(jsonString, getHeadersMap(request)).get();
+            }
+        }
+        if (Strings.isNullOrEmpty(responseText)) {
+            for (IntentHandler handler : handlers) {
+                if (intentName.contains(handler.getIntentNameContext())) {
+                    handler.updateRouting(handler.getClass(), intentName);
+                    responseText = handler.handleRequest(jsonString, getHeadersMap(request)).get();
+                }
+            }
+        }
+        if (Strings.isNullOrEmpty(responseText)) {
+            for (IntentHandler handler : handlers) {
+                if (handler.getIntentNameContext().contains(intentName)) {
+                    handler.updateRouting(handler.getClass(), intentName);
+                    responseText = handler.handleRequest(jsonString, getHeadersMap(request)).get();
+                }
+            }
+        }
+        if (!Strings.isNullOrEmpty(responseText)) {
+            response.setStatus(HttpServletResponse.SC_OK);
+            response.getWriter().write(responseText);
+            response.getWriter().flush();
+        }
+    }
+
+    private void processAlexaRequest(byte[] serializedRequestEnvelope, HttpServletRequest request, HttpServletResponse response) throws IOException {
+        final RequestEnvelope deserializedRequestEnvelope = serializer.deserialize(IOUtils.toString(
+                serializedRequestEnvelope, ServletConstants.CHARACTER_ENCODING), RequestEnvelope.class);
+
+        final AlexaHttpRequest alexaHttpRequest = new ServletRequest(request, serializedRequestEnvelope, deserializedRequestEnvelope);
+
+        for (SkillServletVerifier verifier : verifiers) {
+            verifier.verify(alexaHttpRequest);
+        }
+
+        ResponseEnvelope skillResponse = skill.invoke(deserializedRequestEnvelope);
+        response.setContentType("application/json");
+        response.setStatus(HttpServletResponse.SC_OK);
+        if (skillResponse != null) {
+            byte[] serializedResponse = serializer.serialize(skillResponse).getBytes(StandardCharsets.UTF_8);
+            try (final OutputStream out = response.getOutputStream()) {
+                response.setContentLength(serializedResponse.length);
+                out.write(serializedResponse);
+            }
         }
     }
 
@@ -246,7 +251,7 @@ public class SkillAndActionServlet extends HttpServlet {
         return headersMap;
     }
 
-    private IntentHandler routeRequest(AppRequestInput requestInput) {
+    private IntentHandler routeRequest(ActionsBuilderRequestInput requestInput) {
         String handlerRoutingQuery = null;
         String resolvedSlot = null;
         Map<String, Object> sessionStorage = requestInput.getSession().getParams();
@@ -302,6 +307,33 @@ public class SkillAndActionServlet extends HttpServlet {
         }
         for (String param : paramsToRemove) {
             sessionStorage.remove(param);
+        }
+    }
+
+    public SkillAndActionServlet setApplicationName(String applicationName) {
+        this.applicationName = applicationName;
+        return this;
+    }
+
+    private class LaunchRequestHandler implements RequestHandler {
+        @Override
+        public boolean canHandle(HandlerInput input) {
+            return input.matches(Predicates.requestType(LaunchRequest.class));
+        }
+
+        @Override
+        public Optional<Response> handle(HandlerInput input) {
+            String speechText;
+            if (Strings.isNullOrEmpty(applicationName)) {
+                speechText = "Welcome, what can I help you with?";
+            } else {
+                speechText = "Welcome to " + applicationName + ", what can I help you with?";
+            }
+            return input.getResponseBuilder()
+                    .withSpeech(speechText)
+                    .withSimpleCard("Welcome", speechText)
+                    .withReprompt(speechText)
+                    .build();
         }
     }
 }
